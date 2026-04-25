@@ -1,0 +1,67 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&family=Outfit:wght@700;800;900&display=swap');
+@import "tailwindcss";
+
+
+@theme {
+  /* White Theme Colors Definition */
+  --color-primary: #5f49e0;
+  --color-background: #FFFFFF;
+  --color-surface: #F8FAFC;
+  --color-border: #E2E8F0;
+  --color-text-main: #1E293B;
+  --color-text-muted: #64748B;
+
+  /* Custom Shadows for White Theme */
+  --shadow-soft: 0 2px 15px -3px rgba(0, 0, 0, 0.07), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+
+  /* Typography */
+  --font-sans: 'Roboto', sans-serif;
+  --font-heading: 'Outfit', sans-serif;
+}
+
+/* Global Styles */
+@layer base {
+  body {
+    @apply bg-surface text-text-main font-sans antialiased selection:bg-primary/10 selection:text-primary;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    @apply font-heading tracking-tight;
+  }
+
+  input,
+  button,
+  select,
+  textarea {
+    @apply font-sans;
+  }
+}
+
+/* Custom Animation for Page Transitions */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-animate {
+  animation: fadeIn 0.5s ease-out forwards;
+}
+
+.fade-in {
+  animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
