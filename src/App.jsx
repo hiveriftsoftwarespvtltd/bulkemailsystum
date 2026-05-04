@@ -12,9 +12,9 @@ import AuditLog from './pages/AuditLog';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
-import { LogOut, User, ChevronDown } from 'lucide-react';
 import config from './config';
 import CampaignInbox from './pages/CampaignInbox';
+import Navbar from './components/Navbar';
 
 // --- GLOBAL FETCH INTERCEPTOR FOR SESSION TIMEOUTS ---
 const originalFetch = window.fetch;
@@ -34,7 +34,6 @@ window.fetch = async function (...args) {
 
 // --- MAIN LAYOUT COMPONENT ---
 const MainLayout = ({ children, onLogout }) => {
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
   let user = {};
   try {
     const storedUser = localStorage.getItem('user');
@@ -54,61 +53,9 @@ const MainLayout = ({ children, onLogout }) => {
     <div className="flex h-screen bg-surface text-text-main font-sans overflow-hidden">
       {!isCampaignFlow && <Sidebar />}
       <main className={`${!isCampaignFlow ? 'ml-64' : 'ml-0'} flex-1 flex flex-col overflow-hidden transition-all duration-300`}>
-        {/* --- HEADER --- */}
+        {/* --- NAVBAR --- */}
         {!isCampaignFlow && (
-          <header className="px-10 py-5 flex justify-between items-center border-b border-border bg-background shadow-sm z-50 shrink-0">
-            <div className="space-y-0.5">
-              <h2 className="text-xl font-extrabold text-text-main tracking-tight font-heading">
-                Email Marketing System
-              </h2>
-              <p className="text-[10px] font-black text-text-muted uppercase tracking-widest leading-none">Campaign Control Center</p>
-            </div>
-
-            <div className="flex items-center gap-6">
-              <div className="h-8 w-px bg-border hidden md:block"></div>
-
-              {/* Profile Dropdown */}
-              <div className="relative">
-                <button
-                  onClick={() => setIsProfileOpen(!isProfileOpen)}
-                  className="flex items-center gap-3 p-1 pr-3 hover:bg-surface rounded-2xl transition-all"
-                >
-                  <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center text-white font-extrabold shadow-lg shadow-primary/20">
-                    {user.fullName ? user.fullName.charAt(0).toUpperCase() : 'A'}
-                  </div>
-                  <div className="text-left hidden md:block">
-                    <p className="text-xs font-black text-text-main leading-tight font-sans">{user.fullName || 'Admin'}</p>
-                    <p className="text-[10px] font-bold text-text-muted leading-tight font-sans">{user.email || 'admin@mailflow.com'}</p>
-                  </div>
-                  <ChevronDown size={14} className={`text-text-muted transition-transform duration-300 ${isProfileOpen ? 'rotate-180' : ''}`} />
-                </button>
-
-                {/* Dropdown Menu */}
-                {isProfileOpen && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setIsProfileOpen(false)}></div>
-                    <div className="absolute right-0 mt-3 w-64 bg-background rounded-3xl shadow-2xl border border-border p-3 z-50 fade-in">
-                      <div className="p-4 border-b border-border mb-2">
-                        <p className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-1">Logged in as</p>
-                        <p className="text-sm font-bold text-text-main truncate font-sans">{user.email}</p>
-                      </div>
-
-                      {/* <button className="w-full flex items-center gap-3 p-3 text-text-muted hover:bg-surface rounded-2xl transition-all text-sm font-bold font-sans">
-                          <User size={18} /> My Profile
-                       </button> */}
-
-                      <button
-                        onClick={onLogout}
-                        className="w-full flex items-center gap-3 p-3 text-rose-500 hover:bg-rose-50 rounded-2xl transition-all text-sm font-bold mt-1 font-sans"
-                      >
-                        <LogOut size={18} /> Logout Session
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </header>
+          <Navbar user={user} onLogout={onLogout} />
         )}
 
         {/* Content Area */}

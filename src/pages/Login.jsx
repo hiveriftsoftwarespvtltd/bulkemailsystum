@@ -110,7 +110,7 @@ const Login = ({ onLogin }) => {
                         <div className="space-y-2">
                             <div className="flex justify-between items-center px-1">
                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Password</label>
-                                <a href="#" className="text-[10px] font-black text-primary uppercase tracking-widest hover:underline tracking-widest">Forgot?</a>
+                                <Link to="/forgot-password" size={14} className="text-[10px] font-black text-primary uppercase tracking-widest hover:underline tracking-widest">Forgot?</Link>
                             </div>
                             <div className="relative group">
                                 <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-primary transition-colors" size={18} />
