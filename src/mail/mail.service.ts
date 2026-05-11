@@ -16,7 +16,7 @@ export class MailService {
   constructor(
     @InjectModel(EmailLog.name) private emailModel: Model<EmailLogDocument>,
     private configService: ConfigService,
-  ) {}
+  ) { }
 
   async sendEmailWithTracking(
     transporter: nodemailer.Transporter,
@@ -109,6 +109,10 @@ export class MailService {
         try {
           const cfg = configs[currentSmtpIndex % configs.length];
           const transporter = transporters[currentSmtpIndex % transporters.length];
+          const { host, port, auth } = (transporter.options as any);
+          const smtpUser = auth?.user;
+          
+          this.logger.log(`📧 [DEBUG] Attempting send via ${host}:${port} for user: ${smtpUser}`);
 
           const res = await this.sendEmailWithTracking(
             transporter,
@@ -120,13 +124,13 @@ export class MailService {
             'SMTP',
           );
           results.push(res);
-          
+
           currentSmtpIndex++;
 
         } catch (error) {
           results.push({ recipient, error: error.message });
         }
-        
+
         // Always wait between emails
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }
@@ -175,13 +179,13 @@ export class MailService {
             'GOOGLE',
           );
           results.push(res);
-          
+
           currentAccountIndex++;
 
         } catch (error) {
           results.push({ recipient, error: error.message });
         }
-        
+
         // Always wait between emails
         await new Promise((resolve) => setTimeout(resolve, 3000));
       }

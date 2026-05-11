@@ -1,3 +1,4 @@
+import { google } from 'googleapis';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { CreateCampaign, CreateCampaignDocument } from './entities/create-campaign.entity';
@@ -274,16 +275,20 @@ export class CreateCampaignService {
       const googleConfig = await this.googleMailModel.findOne(googleQuery);
 
       if (googleConfig) {
+        console.log(`🛠️ Preparing Google Test Transporter for: ${googleConfig.email}`);
+        console.log(`   - ClientID: ${process.env.GOOGLE_CLIENT_ID ? 'Present' : 'MISSING'}`);
+        console.log(`   - RefreshToken: ${googleConfig.refreshToken ? 'Present' : 'MISSING'}`);
+
         const transporter = nodemailer.createTransport({
           service: 'gmail',
           auth: {
             type: 'OAuth2',
             user: googleConfig.email,
-            clientId: this.configService.get<string>('GOOGLE_CLIENT_ID'),
-            clientSecret: this.configService.get<string>('GOOGLE_CLIENT_SECRET'),
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
             refreshToken: googleConfig.refreshToken,
-            accessToken: googleConfig.accessToken,
           },
+          debug: true,
         } as any);
 
         const result = await transporter.sendMail({
@@ -457,15 +462,63 @@ export class CreateCampaignService {
       this.googleMailModel.find({ _id: { $in: accountIds }, tenantId: workspaceId }).lean()
     ]);
 
-    if (smtpConfigs.length === 0 && googleConfigs.length === 0) {
-      console.error(`❌ Job Failed: No valid accounts found for ${accountIds} during processing.`);
-      return;
-    }
+    console.log(`🛠️ Job resolution: Found ${smtpConfigs.length} SMTP and ${googleConfigs.length} Google accounts.`);
 
     const accounts: any[] = [];
 
-    // Create SMTP transporters
+    // Create Google OAuth transporters (Prioritize Google)
+    for (const config of googleConfigs) {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+      console.log(`🛠️ Attempting manual token refresh for: ${config.email}`);
+
+      try {
+        const oauth2Client = new google.auth.OAuth2(clientId, clientSecret);
+        oauth2Client.setCredentials({ refresh_token: config.refreshToken });
+        const { token } = await oauth2Client.getAccessToken();
+
+        if (!token) {
+          throw new Error('Failed to obtain fresh access token from Google.');
+        }
+
+        console.log(`✅ Fresh Access Token obtained for ${config.email}`);
+
+        const transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            type: 'OAuth2',
+            user: config.email,
+            clientId: clientId,
+            clientSecret: clientSecret,
+            refreshToken: config.refreshToken,
+            accessToken: token,
+          },
+        } as any);
+
+        accounts.push({
+          config,
+          transporter,
+          type: 'GOOGLE',
+          fromEmail: config.email,
+          fromName: config.name,
+          replyTo: config.email
+        });
+      } catch (error) {
+        console.error(`❌ Google Auth Failed for ${config.email}: ${error.message}`);
+        // Fallback to old token if refresh fails, though it likely won't work
+      }
+    }
+
+    // Create SMTP transporters (Only if not already added as Google)
     smtpConfigs.forEach(config => {
+      // Check if we already have this email as a Google account
+      if (accounts.some(a => a.fromEmail === config.fromEmail)) {
+        console.log(`⏭️ Skipping SMTP for ${config.fromEmail} as Google OAuth is available.`);
+        return;
+      }
+
+      console.log(`🛠️ Using SMTP for: ${config.fromEmail}`);
       const transporter = nodemailer.createTransport({
         host: config.smtpHost,
         port: config.smtpPort,
@@ -480,9 +533,6 @@ export class CreateCampaignService {
         connectionTimeout: 30000,
         greetingTimeout: 30000,
         family: 4,
-        lookup: (hostname, options, callback) => {
-          require('dns').lookup(hostname, { family: 4 }, callback);
-        },
       } as any);
 
       accounts.push({
@@ -495,29 +545,10 @@ export class CreateCampaignService {
       });
     });
 
-    // Create Google OAuth transporters
-    googleConfigs.forEach(config => {
-      const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-          type: 'OAuth2',
-          user: config.email,
-          clientId: this.configService.get<string>('GOOGLE_CLIENT_ID'),
-          clientSecret: this.configService.get<string>('GOOGLE_CLIENT_SECRET'),
-          refreshToken: config.refreshToken,
-          accessToken: config.accessToken,
-        },
-      } as any);
-
-      accounts.push({
-        config,
-        transporter,
-        type: 'GOOGLE',
-        fromEmail: config.email,
-        fromName: config.name,
-        replyTo: config.email
-      });
-    });
+    if (accounts.length === 0) {
+      console.error(`❌ Job Failed: No valid accounts could be initialized.`);
+      return;
+    }
 
     await this.processCampaignSending(campaign, accounts, workspaceId);
   }
@@ -527,6 +558,7 @@ export class CreateCampaignService {
 
     let currentAccountIndex = 0;
     for (const contact of campaign.contacts) {
+      let currentAccount: any = null;
       try {
         const recipientEmail = contact.email ? contact.email.toString().trim() : '';
 
@@ -536,8 +568,8 @@ export class CreateCampaignService {
           continue;
         }
 
-        const account = accounts[currentAccountIndex % accounts.length];
-        const { config, transporter, type, fromEmail, fromName, replyTo } = account;
+        currentAccount = accounts[currentAccountIndex % accounts.length];
+        const { transporter, type, fromEmail, fromName, replyTo } = currentAccount;
 
         const personalizedSubject = this.replaceVariables(campaign.subject, contact);
         const personalizedBody = this.replaceVariables(campaign.body, contact);
@@ -545,7 +577,7 @@ export class CreateCampaignService {
         await this.mailService.sendEmailWithTracking(
           transporter,
           fromEmail,
-          recipientEmail,
+          contact.email,
           personalizedSubject,
           personalizedBody,
           workspaceId,
@@ -554,12 +586,20 @@ export class CreateCampaignService {
           replyTo
         );
 
-        console.log(`✅ [${type}: ${fromEmail}] Sent successfully to: ${recipientEmail}`);
+        console.log(`✅ [${type}: ${fromEmail}] Sent & Logged successfully to: ${contact.email}`);
 
         currentAccountIndex++;
       } catch (error) {
         let errorMessage = error.message;
         if (errorMessage.includes('535-5.7.8') || errorMessage.includes('BadCredentials')) {
+          const fromEmail = currentAccount?.fromEmail || '';
+          const type = currentAccount?.type || 'SMTP';
+
+          if (fromEmail.toLowerCase().endsWith('@gmail.com') && type === 'SMTP') {
+            console.error(`⚠️  [GMAIL SMTP ERROR]: Google rejected your password. 
+👉 FOR GMAIL SMTP: You MUST use an "App Password" (not your regular password).
+👉 OR BETTER: Delete this account and add it via "Connect Google Account" (OAuth) for 100% success.`);
+          }
           errorMessage = 'SMTP/OAuth Error: Authentication failed. Please check your credentials.';
         }
         console.error(`❌ Failed sending to ${contact.email}:`, errorMessage);

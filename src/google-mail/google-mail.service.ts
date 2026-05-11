@@ -26,7 +26,9 @@ export class GoogleMailService {
 
   getAuthUrl(tenantId: string, redirectUrl?: string) {
     const scopes = [
-      'https://www.googleapis.com/auth/gmail.send',
+      'https://mail.google.com/',
+      'https://www.googleapis.com/auth/gmail.readonly',
+      'https://www.googleapis.com/auth/gmail.compose',
       'https://www.googleapis.com/auth/gmail.modify',
       'https://www.googleapis.com/auth/userinfo.email',
       'https://www.googleapis.com/auth/userinfo.profile'
@@ -107,5 +109,13 @@ export class GoogleMailService {
   async listAccounts(tenantId: string) {
     const accounts = await this.googleMailModel.find({ tenantId });
     return new CustomResponse(200, 'Google accounts retrieved', accounts);
+  }
+
+  async remove(id: string) {
+    const result = await this.googleMailModel.findByIdAndDelete(id);
+    if (!result) {
+      throwException(new CustomError(404, 'Google account not found'));
+    }
+    return new CustomResponse(200, 'Google account deleted successfully');
   }
 }

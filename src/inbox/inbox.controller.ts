@@ -5,7 +5,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 @Controller('inbox')
 @UseGuards(JwtAuthGuard)
 export class InboxController {
-  constructor(private readonly inboxService: InboxService) {}
+  constructor(private readonly inboxService: InboxService) { }
 
   @Get('accounts')
   async getAccounts(@Request() req) {
@@ -41,5 +41,15 @@ export class InboxController {
   ) {
     const companyId = req.user.companyId;
     return this.inboxService.getAllRecentReplies(accountId, companyId);
+  }
+
+  @Get('thread/:accountId/:messageId')
+  async getThread(
+    @Param('accountId') accountId: string,
+    @Param('messageId') messageId: string,
+    @Request() req,
+  ) {
+    const companyId = req.user.companyId;
+    return this.inboxService.getThread(accountId, companyId, messageId);
   }
 }

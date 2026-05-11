@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res, Param, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Query, Res, Param, UseGuards, Request, Delete } from '@nestjs/common';
 import { GoogleMailService } from './google-mail.service';
 import { Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -42,5 +42,11 @@ export class GoogleMailController {
   async listAccounts(@Request() req) {
     const tenantId = req.user.companyId;
     return this.googleMailService.listAccounts(tenantId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete(':id')
+  async remove(@Param('id') id: string) {
+    return this.googleMailService.remove(id);
   }
 }
