@@ -16,9 +16,9 @@ import { User, UserSchema } from '../auth/schemas/user.schema';
       { name: SmtpSender.name, schema: SmtpSenderSchema },
       { name: User.name, schema: UserSchema },
     ]),
-    
+
   ],
   controllers: [DashboardController],
   providers: [DashboardService],
 })
-export class DashboardModule {}
+export class DashboardModule { }

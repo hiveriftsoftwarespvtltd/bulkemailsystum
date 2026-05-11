@@ -4,6 +4,8 @@ import { CreateCampaign, CreateCampaignDocument } from './entities/create-campai
 import { SmtpSender } from '../smtp-sender/entities/smtp-sender.entity';
 import { ScheduleCampaign, ScheduleCampaignDocument } from '../schedule-campaign/entities/schedule-campaign.entity';
 import { EmailLog, EmailLogDocument } from '../logs/schemas/email-log.schema';
+import { GoogleMail, GoogleMailDocument } from '../google-mail/entities/google-mail.entity';
+import { ConfigService } from '@nestjs/config';
 import { Model } from 'mongoose';
 import { throwException } from 'src/util/util/errorhandling';
 import CustomError from 'src/provider/customer-error.service';
@@ -27,9 +29,12 @@ export class CreateCampaignService {
     private emailLogModel: Model<EmailLogDocument>,
     @InjectModel(ScheduleCampaign.name)
     private scheduleModel: Model<ScheduleCampaignDocument>,
+    @InjectModel(GoogleMail.name)
+    private googleMailModel: Model<GoogleMailDocument>,
     @InjectQueue('campaign')
     private campaignQueue: Queue,
     private mailService: MailService,
+    private configService: ConfigService,
   ) { }
 
   // ✅ BUILT-IN ROBUST PATH RESOLVER
@@ -93,11 +98,11 @@ export class CreateCampaignService {
 
       const mappedContacts = data.map((row: any) => {
         const contact: any = {};
-        
+
         // Dynamic mapping based on whatever fields were sent in the DTO
         // We exclude known non-mapping fields like filePath, name, subject, body, etc.
         const excludeFields = ['filePath', 'name', 'subject', 'body', 'status'];
-        
+
         for (const [key, csvColumn] of Object.entries(dto)) {
           if (!excludeFields.includes(key) && typeof csvColumn === 'string') {
             contact[key] = row[csvColumn];
@@ -106,7 +111,7 @@ export class CreateCampaignService {
 
         // Ensure email is always present (compatibility with old emailField or new email)
         contact.email = row[dto.emailField] || row[dto.email] || row['Email'];
-        
+
         return contact;
       });
 
@@ -119,7 +124,7 @@ export class CreateCampaignService {
         status: dto.status || 'ACTIVE',
         contacts: mappedContacts,
         // Save the mapping for reference
-        mapping: dto 
+        mapping: dto
       });
 
       const result = {
@@ -141,7 +146,7 @@ export class CreateCampaignService {
 
     obj.sent = total;
     obj.opened = opened;
-    obj.replied = clicked; 
+    obj.replied = clicked;
     obj.positiveReply = 0;
     obj.bounced = 0;
     obj.senderBounced = 0;
@@ -208,58 +213,90 @@ export class CreateCampaignService {
 
   async sendTestEmail(dto: any, workspaceId: string) {
     try {
-      const smtpId = dto.smtpAccountId || dto.accountId || dto.id || dto.senderEmail;
+      const accountId = dto.smtpAccountId || dto.accountId || dto.id || dto.senderEmail;
       const destinationEmail = dto.testEmail || dto.to || dto.email;
       const mailSubject = dto.subject;
       const mailBody = dto.body || dto.html;
 
-      if (!smtpId || !destinationEmail) {
-        throw new Error('SMTP account ID/Email and destination email are required');
+      if (!accountId || !destinationEmail) {
+        throw new Error('Account ID/Email and destination email are required');
       }
 
       if (!mailSubject || !mailBody) {
-        throw new Error('Campaign subject and body are required to send a test email in the exact format.');
+        throw new Error('Campaign subject and body are required to send a test email.');
       }
 
-      const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(smtpId);
+      const isValidObjectId = /^[0-9a-fA-F]{24}$/.test(accountId);
 
-      const query = isValidObjectId
-        ? { _id: smtpId, tenantId: workspaceId }
-        : { fromEmail: smtpId, tenantId: workspaceId };
+      // 1. Try to find SMTP account
+      const smtpQuery = isValidObjectId
+        ? { _id: accountId, tenantId: workspaceId }
+        : { fromEmail: accountId, tenantId: workspaceId };
 
-      const config = await this.smtpSenderModel.findOne(query);
-      if (!config) {
-        throw new NotFoundException(`SMTP configuration not found for account: ${smtpId}`);
+      const smtpConfig = await this.smtpSenderModel.findOne(smtpQuery);
+
+      if (smtpConfig) {
+        const transporter = nodemailer.createTransport({
+          host: smtpConfig.smtpHost,
+          port: smtpConfig.smtpPort,
+          secure: smtpConfig.smtpPort === 465,
+          auth: {
+            user: smtpConfig.userName,
+            pass: smtpConfig.password,
+          },
+          tls: {
+            rejectUnauthorized: false,
+          },
+          connectionTimeout: 30000,
+          greetingTimeout: 30000,
+          family: 4,
+          lookup: (hostname, options, callback) => {
+            require('dns').lookup(hostname, { family: 4 }, callback);
+          },
+        } as any);
+
+        const result = await transporter.sendMail({
+          from: `"${smtpConfig.fromName}" <${smtpConfig.fromEmail}>`,
+          to: destinationEmail,
+          subject: mailSubject,
+          html: mailBody,
+          replyTo: smtpConfig.useCustomReplyTo ? smtpConfig.replyTo : smtpConfig.fromEmail,
+        });
+
+        return new CustomResponse(200, 'Test email sent successfully via SMTP', result);
       }
 
-      const transporter = nodemailer.createTransport({
-        host: config.smtpHost,
-        port: config.smtpPort,
-        secure: config.smtpPort === 465,
-        auth: {
-          user: config.userName,
-          pass: config.password,
-        },
-        tls: {
-          rejectUnauthorized: false,
-        },
-        connectionTimeout: 30000,
-        greetingTimeout: 30000,
-        family: 4,
-        lookup: (hostname, options, callback) => {
-          require('dns').lookup(hostname, { family: 4 }, callback);
-        },
-      } as any);
-      
-      const result = await transporter.sendMail({
-        from: `"${config.fromName}" <${config.fromEmail}>`,
-        to: destinationEmail,
-        subject: mailSubject,
-        html: mailBody,
-        replyTo: config.useCustomReplyTo ? config.replyTo : config.fromEmail,
-      });
+      // 2. Try to find Google account
+      const googleQuery = isValidObjectId
+        ? { _id: accountId, tenantId: workspaceId }
+        : { email: accountId, tenantId: workspaceId };
 
-      return new CustomResponse(200, 'Test email sent successfully', result);
+      const googleConfig = await this.googleMailModel.findOne(googleQuery);
+
+      if (googleConfig) {
+        const transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            type: 'OAuth2',
+            user: googleConfig.email,
+            clientId: this.configService.get<string>('GOOGLE_CLIENT_ID'),
+            clientSecret: this.configService.get<string>('GOOGLE_CLIENT_SECRET'),
+            refreshToken: googleConfig.refreshToken,
+            accessToken: googleConfig.accessToken,
+          },
+        } as any);
+
+        const result = await transporter.sendMail({
+          from: `"${googleConfig.name}" <${googleConfig.email}>`,
+          to: destinationEmail,
+          subject: mailSubject,
+          html: mailBody,
+        });
+
+        return new CustomResponse(200, 'Test email sent successfully via Google OAuth', result);
+      }
+
+      throw new NotFoundException(`Account configuration not found for: ${accountId}`);
     } catch (error) {
       throwException(new CustomError(error.status || 500, error.message));
     }
@@ -268,19 +305,19 @@ export class CreateCampaignService {
   private replaceVariables(template: string, contact: any): string {
     if (!template) return '';
     let result = template;
-    
+
     for (const [key, value] of Object.entries(contact)) {
       const val = value?.toString() || '';
 
       result = result.replace(new RegExp(`{{${key}}}`, 'gi'), val);
-      
+
       const normalizedKey = key.replace(/\s+/g, '');
       result = result.replace(new RegExp(`{{${normalizedKey}}}`, 'gi'), val);
- 
+
       const spacedKey = key.replace(/([A-Z])/g, ' $1').trim();
       result = result.replace(new RegExp(`{{${spacedKey}}}`, 'gi'), val);
     }
-    
+
     if (contact.email) result = result.replace(/{{email}}/gi, contact.email);
     if (contact.firstName) result = result.replace(/{{firstName}}/gi, contact.firstName);
     if (contact.name) result = result.replace(/{{name}}/gi, contact.name);
@@ -310,7 +347,7 @@ export class CreateCampaignService {
           console.log(`Found schedule! Using interval: ${finalDelayMinutes} minutes.`);
         } else {
           console.log(`No schedule found. Using default minor delay.`);
-          finalDelayMinutes = 0.05; 
+          finalDelayMinutes = 0.05;
         }
       }
 
@@ -325,25 +362,34 @@ export class CreateCampaignService {
         useQueue = false;
       }
 
-      console.log(`✅ Campaign found: ${campaign.name}. Validating SMTP accounts...`);
+      console.log(`✅ Campaign found: ${campaign.name}. Validating sender accounts...`);
 
-      let targetSmtpIds: string[] = [];
+      let targetAccountIds: string[] = [];
       if (!smtpAccountId || smtpAccountId === 'all' || (Array.isArray(smtpAccountId) && smtpAccountId.length === 0)) {
-        console.log(`No SMTP accounts specified. Fetching all available accounts for workspace: ${workspaceId}`);
-        const allConfigs = await this.smtpSenderModel.find({ tenantId: workspaceId });
-        targetSmtpIds = allConfigs.map(c => (c as any)._id.toString());
+        console.log(`No accounts specified. Fetching all available accounts for workspace: ${workspaceId}`);
+        const [smtpConfigs, googleConfigs] = await Promise.all([
+          this.smtpSenderModel.find({ tenantId: workspaceId }),
+          this.googleMailModel.find({ tenantId: workspaceId })
+        ]);
+        targetAccountIds = [
+          ...smtpConfigs.map(c => (c as any)._id.toString()),
+          ...googleConfigs.map(c => (c as any)._id.toString())
+        ];
       } else {
-        targetSmtpIds = Array.isArray(smtpAccountId) ? smtpAccountId : [smtpAccountId];
+        targetAccountIds = Array.isArray(smtpAccountId) ? smtpAccountId : [smtpAccountId];
       }
 
-      const smtpConfigs = await this.smtpSenderModel.find({ _id: { $in: targetSmtpIds }, tenantId: workspaceId });
-      
-      if (!smtpConfigs || smtpConfigs.length === 0) {
-        console.error(`❌ No valid SMTP configurations found for IDs: ${targetSmtpIds} in workspace: ${workspaceId}`);
-        throw new NotFoundException(`No valid SMTP configurations found. Please ensure you have at least one SMTP account added.`);
+      const [smtpConfigs, googleConfigs] = await Promise.all([
+        this.smtpSenderModel.find({ _id: { $in: targetAccountIds }, tenantId: workspaceId }),
+        this.googleMailModel.find({ _id: { $in: targetAccountIds }, tenantId: workspaceId })
+      ]);
+
+      if (smtpConfigs.length === 0 && googleConfigs.length === 0) {
+        console.error(`❌ No valid SMTP or Google configurations found for IDs: ${targetAccountIds} in workspace: ${workspaceId}`);
+        throw new NotFoundException(`No valid sender accounts found. Please ensure you have at least one SMTP or Google account added.`);
       }
 
-      console.log(`✅ Found ${smtpConfigs.length} SMTP Config(s). Preparing...`);
+      console.log(`✅ Found ${smtpConfigs.length} SMTP and ${googleConfigs.length} Google Config(s). Preparing...`);
 
       let delayMs = 0;
       if (scheduledAt) {
@@ -356,7 +402,7 @@ export class CreateCampaignService {
 
       const jobData = {
         campaignId: id,
-        smtpAccountIds: targetSmtpIds,
+        accountIds: targetAccountIds,
         workspaceId,
       };
 
@@ -398,22 +444,29 @@ export class CreateCampaignService {
   // This will be moved to a processor, but for now I'll keep it here and call it from a processor soon
   async runCampaignJob(data: any) {
     console.log(`🛠️ Processor running job for campaign: ${data.campaignId}`);
-    const { campaignId, smtpAccountIds, workspaceId } = data;
+    const { campaignId, accountIds, workspaceId } = data;
     const campaign = await this.campaignModel.findOne({ _id: campaignId, workspaceId });
     if (!campaign) {
       console.error(`❌ Job Failed: Campaign ${campaignId} not found during processing.`);
       return;
     }
 
-    // Fetch fresh config from DB to ensure we have the latest password/settings
-    const smtpConfigs = await this.smtpSenderModel.find({ _id: { $in: smtpAccountIds }, tenantId: workspaceId }).lean();
-    if (!smtpConfigs || smtpConfigs.length === 0) {
-      console.error(`❌ Job Failed: No SMTP configs found for ${smtpAccountIds} during processing.`);
+    // Fetch fresh configs from DB
+    const [smtpConfigs, googleConfigs] = await Promise.all([
+      this.smtpSenderModel.find({ _id: { $in: accountIds }, tenantId: workspaceId }).lean(),
+      this.googleMailModel.find({ _id: { $in: accountIds }, tenantId: workspaceId }).lean()
+    ]);
+
+    if (smtpConfigs.length === 0 && googleConfigs.length === 0) {
+      console.error(`❌ Job Failed: No valid accounts found for ${accountIds} during processing.`);
       return;
     }
 
-    const transporters = smtpConfigs.map(config => {
-      return nodemailer.createTransport({
+    const accounts: any[] = [];
+
+    // Create SMTP transporters
+    smtpConfigs.forEach(config => {
+      const transporter = nodemailer.createTransport({
         host: config.smtpHost,
         port: config.smtpPort,
         secure: config.smtpPort === 465,
@@ -431,15 +484,48 @@ export class CreateCampaignService {
           require('dns').lookup(hostname, { family: 4 }, callback);
         },
       } as any);
+
+      accounts.push({
+        config,
+        transporter,
+        type: 'SMTP',
+        fromEmail: config.fromEmail,
+        fromName: config.fromName,
+        replyTo: config.useCustomReplyTo ? config.replyTo : config.fromEmail
+      });
     });
 
-    await this.processCampaignSending(campaign, smtpConfigs, transporters, workspaceId);
+    // Create Google OAuth transporters
+    googleConfigs.forEach(config => {
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          type: 'OAuth2',
+          user: config.email,
+          clientId: this.configService.get<string>('GOOGLE_CLIENT_ID'),
+          clientSecret: this.configService.get<string>('GOOGLE_CLIENT_SECRET'),
+          refreshToken: config.refreshToken,
+          accessToken: config.accessToken,
+        },
+      } as any);
+
+      accounts.push({
+        config,
+        transporter,
+        type: 'GOOGLE',
+        fromEmail: config.email,
+        fromName: config.name,
+        replyTo: config.email
+      });
+    });
+
+    await this.processCampaignSending(campaign, accounts, workspaceId);
   }
 
-  private async processCampaignSending(campaign: any, smtpConfigs: any[], transporters: any[], workspaceId: string) {
-    console.log(`🚀 Starting Bulk Send for Campaign: ${campaign.name} (${campaign.contacts.length} contacts) using ${smtpConfigs.length} SMTP accounts`);
+  private async processCampaignSending(campaign: any, accounts: any[], workspaceId: string) {
+    console.log(`🚀 Starting Bulk Send for Campaign: ${campaign.name} (${campaign.contacts.length} contacts) using ${accounts.length} accounts`);
 
-    let currentSmtpIndex = 0;
+    let currentAccountIndex = 0;
     for (const contact of campaign.contacts) {
       try {
         const recipientEmail = contact.email ? contact.email.toString().trim() : '';
@@ -450,28 +536,31 @@ export class CreateCampaignService {
           continue;
         }
 
-        const smtpConfig = smtpConfigs[currentSmtpIndex % smtpConfigs.length];
-        const transporter = transporters[currentSmtpIndex % transporters.length];
+        const account = accounts[currentAccountIndex % accounts.length];
+        const { config, transporter, type, fromEmail, fromName, replyTo } = account;
 
         const personalizedSubject = this.replaceVariables(campaign.subject, contact);
         const personalizedBody = this.replaceVariables(campaign.body, contact);
 
         await this.mailService.sendEmailWithTracking(
           transporter,
-          smtpConfig.userName,
+          fromEmail,
           recipientEmail,
           personalizedSubject,
           personalizedBody,
-          workspaceId
+          workspaceId,
+          type,
+          fromName,
+          replyTo
         );
 
-        console.log(`✅ [SMTP: ${smtpConfig.fromEmail}] Sent successfully to: ${recipientEmail}`);
+        console.log(`✅ [${type}: ${fromEmail}] Sent successfully to: ${recipientEmail}`);
 
-        currentSmtpIndex++;
+        currentAccountIndex++;
       } catch (error) {
         let errorMessage = error.message;
         if (errorMessage.includes('535-5.7.8') || errorMessage.includes('BadCredentials')) {
-          errorMessage = 'Gmail SMTP Error: Username and Password not accepted. FIX: You MUST use a Google "App Password".';
+          errorMessage = 'SMTP/OAuth Error: Authentication failed. Please check your credentials.';
         }
         console.error(`❌ Failed sending to ${contact.email}:`, errorMessage);
       }

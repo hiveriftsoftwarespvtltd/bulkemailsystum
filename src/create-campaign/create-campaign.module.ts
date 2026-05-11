@@ -9,6 +9,7 @@ import { SmtpSender, SmtpSenderSchema } from '../smtp-sender/entities/smtp-sende
 import { EmailLog, EmailLogSchema } from '../logs/schemas/email-log.schema';
 import { BullModule } from '@nestjs/bull';
 import { CampaignProcessor } from './processors/campaign.processor';
+import { GoogleMail, GoogleMailSchema } from '../google-mail/entities/google-mail.entity';
 
 @Module({
   imports: [
@@ -16,7 +17,8 @@ import { CampaignProcessor } from './processors/campaign.processor';
       { name: CreateCampaign.name, schema: CreateCampaignSchema },
       { name: SmtpSender.name, schema: SmtpSenderSchema },
       { name: EmailLog.name, schema: EmailLogSchema },
-      { name: ScheduleCampaign.name, schema: ScheduleCampaignSchema }
+      { name: ScheduleCampaign.name, schema: ScheduleCampaignSchema },
+      { name: GoogleMail.name, schema: GoogleMailSchema }
     ]),
     MailModule,
     BullModule.registerQueue({
@@ -26,4 +28,4 @@ import { CampaignProcessor } from './processors/campaign.processor';
   controllers: [CreateCampaignController],
   providers: [CreateCampaignService, CampaignProcessor],
 })
-export class CreateCampaignModule {}
+export class CreateCampaignModule { }
